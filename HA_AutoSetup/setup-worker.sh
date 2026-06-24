@@ -212,7 +212,42 @@ run "$SUDO apt-get install -y -q kubelet kubeadm kubectl"
 run "$SUDO apt-mark hold kubelet kubeadm kubectl"
 
 # =============================================================================
-# STAGE 6: Join the cluster as a worker
+# PRE-FLIGHT: Pin the kubelet to the correct node IP
+# =============================================================================
+# Vagrant VMs have TWO network interfaces:
+#   1. eth0 / enp0s3  — NAT adapter (10.0.2.x) used for internet access
+#   2. eth1 / enp0s8  — host-only adapter (192.168.56.x) used for cluster comms
+#
+# Without explicit configuration, the kubelet might auto-detect and advertise
+# the NAT IP (10.0.2.15), which other nodes can't reach. This causes the node
+# to appear "NotReady" or fail TLS verification.
+#
+# FIX: Create a systemd drop-in file that passes --node-ip to the kubelet,
+# forcing it to use the cluster-facing IP.
+stage "Pinning kubelet to node IP"
+
+# Detect this node's cluster-facing IP (same logic as setup-controlplane.sh).
+# Filter out NAT (10.0.2.x), loopback (127.x), and link-local (169.254.x).
+NODE_IP=$(hostname -I | tr ' ' '\n' | grep -vE '^(10\.0\.2\.|127\.|169\.254\.)' | head -1 || true)
+
+if [ -n "$NODE_IP" ]; then
+  info "Detected cluster IP: $NODE_IP"
+  run "$SUDO mkdir -p /etc/systemd/system/kubelet.service.d"
+
+  # Write a drop-in that sets KUBELET_EXTRA_ARGS with --node-ip.
+  # The kubelet reads this environment variable at startup.
+  printf '[Service]\nEnvironment="KUBELET_EXTRA_ARGS=--node-ip=%s"\n' "$NODE_IP" \
+    | $SUDO tee /etc/systemd/system/kubelet.service.d/20-node-ip.conf >/dev/null
+
+  # Reload systemd so it picks up the new drop-in file
+  run "$SUDO systemctl daemon-reload"
+  ok "Kubelet will use $NODE_IP as its node address."
+else
+  warn "Could not detect cluster IP — kubelet will use the default."
+fi
+
+# =============================================================================
+# STAGE 7: Join the cluster as a worker
 # =============================================================================
 # To join the cluster, we need the "join command" that was generated
 # by the first control plane during "kubeadm init".

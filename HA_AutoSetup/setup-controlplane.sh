@@ -165,8 +165,47 @@ else
   FIRST=no
 fi
 
+# --- Extract the VIP hostname and resolve its IP for certificate SANs ---
+# The ENDPOINT looks like "k8s-vip:6443". We need the hostname part
+# ("k8s-vip") and its resolved IP ("192.168.56.10") so we can tell kubeadm
+# to include them as Subject Alternative Names (SANs) in the API server's
+# TLS certificate.
+#
+# WHY IS THIS NEEDED?
+#   When a client connects to https://k8s-vip:6443, TLS checks that the
+#   server certificate is valid for "k8s-vip" (or its IP). If the cert
+#   only contains the node's own IP (e.g., 192.168.56.11), the TLS
+#   handshake fails with: "certificate is valid for 192.168.56.11, not ..."
+#   By adding the VIP hostname AND its IP as extra SANs, the cert is
+#   accepted regardless of whether the client connects via hostname or IP.
+#
+# ADDITIONAL PROBLEM: Vagrant VMs have a NAT interface (10.0.2.x) that
+#   kubeadm can accidentally pick up. If kubeadm uses 10.0.2.15 as an
+#   address but the cert doesn't include it, TLS fails. The fix is
+#   twofold: (a) add extra SANs, and (b) pin the kubelet to NODE_IP.
+
+# Extract just the hostname from the endpoint (strip the :port part).
+# "cut -d: -f1" splits on ":" and takes the first field.
+# Example: "k8s-vip:6443" → "k8s-vip"
+VIP_HOST=$(echo "$ENDPOINT" | cut -d: -f1)
+
+# Try to resolve the VIP hostname to its IP address.
+# "getent hosts" queries /etc/hosts and DNS for the given hostname.
+# "awk '{print $1}'" extracts just the IP from the output.
+# If resolution fails, VIP_IP will be empty (and we skip it in the SANs).
+VIP_IP=$(getent hosts "$VIP_HOST" 2>/dev/null | awk '{print $1}' | head -1 || true)
+
+# Build the comma-separated list of extra SANs to add to the certificate.
+# We always include the VIP hostname; we also include its IP if we resolved it.
+# Example result: "k8s-vip,192.168.56.10"
+EXTRA_SANS="$VIP_HOST"
+if [ -n "$VIP_IP" ] && [ "$VIP_IP" != "$VIP_HOST" ]; then
+  EXTRA_SANS="$EXTRA_SANS,$VIP_IP"
+fi
+
 # Show a summary of the gathered settings
 info "Endpoint=${ENDPOINT}  Node IP=${NODE_IP}  K8s=${K8S}  First=${FIRST}"
+info "Extra SANs for API cert: ${EXTRA_SANS}"
 
 # =============================================================================
 # STAGE 1: Disable swap (required by the kubelet)
@@ -344,12 +383,46 @@ run "$SUDO apt-mark hold kubelet kubeadm kubectl"
 ok "Kubernetes tools installed and held."
 
 # =============================================================================
+# PRE-FLIGHT: Pin the kubelet to the correct node IP
+# =============================================================================
+# Vagrant VMs have TWO network interfaces:
+#   1. eth0 / enp0s3  — NAT adapter (10.0.2.x) used for internet access
+#   2. eth1 / enp0s8  — host-only adapter (192.168.56.x) used for cluster comms
+#
+# By default, the kubelet might auto-detect the NAT IP (10.0.2.15) and
+# advertise it to the cluster. This causes problems:
+#   - Other nodes can't reach this node via 10.0.2.15 (NAT is host-only)
+#   - TLS certificates don't include 10.0.2.15 → cert verification fails
+#
+# FIX: Create a kubelet configuration drop-in that explicitly sets the
+# node IP to the cluster-facing address (192.168.56.x).
+#
+# A "drop-in" is a small config file in /etc/systemd/system/<service>.d/
+# that overrides or extends the service's default settings without
+# modifying the main unit file.
+stage "Pinning kubelet to node IP $NODE_IP"
+info "Creating a systemd drop-in so the kubelet always uses $NODE_IP (not the NAT interface)."
+run "$SUDO mkdir -p /etc/systemd/system/kubelet.service.d"
+
+# Write a drop-in that passes --node-ip to the kubelet.
+# [Service] Environment= sets an environment variable that the kubelet
+# startup script reads. KUBELET_EXTRA_ARGS is the standard variable
+# for passing additional flags to the kubelet.
+printf '[Service]\nEnvironment="KUBELET_EXTRA_ARGS=--node-ip=%s"\n' "$NODE_IP" \
+  | $SUDO tee /etc/systemd/system/kubelet.service.d/20-node-ip.conf >/dev/null
+
+# Reload systemd so it picks up the new drop-in file.
+# "daemon-reload" re-reads all unit files and drop-ins.
+run "$SUDO systemctl daemon-reload"
+ok "Kubelet will use $NODE_IP as its node address."
+
+# =============================================================================
 # BRANCH: Is this the FIRST control plane, or an ADDITIONAL one?
 # =============================================================================
 if [ "$FIRST" = "yes" ]; then
 
   # =========================================================================
-  # STAGE 5: Initialise the cluster with kubeadm init (FIRST control plane)
+  # STAGE 6: Initialise the cluster with kubeadm init (FIRST control plane)
   # =========================================================================
   # "kubeadm init" creates a brand-new Kubernetes cluster on this machine.
   # It generates all the certificates, starts etcd, the API server,
@@ -371,9 +444,17 @@ if [ "$FIRST" = "yes" ]; then
   #
   #   --apiserver-advertise-address = the IP this API server tells other
   #     components to use. Must be the node's cluster-facing IP (not NAT).
+  #
+  #   --apiserver-cert-extra-sans = additional hostnames/IPs to include in
+  #     the API server's TLS certificate. We add the VIP hostname and IP
+  #     so clients connecting via the load balancer pass TLS verification.
+  #     Without this, the cert only contains this node's IP and the
+  #     Kubernetes service IP — connections via the VIP would fail with:
+  #     "certificate is valid for 192.168.56.11, not 192.168.56.10"
   stage "Initialising the control plane (kubeadm init)"
   info "Using --control-plane-endpoint=$ENDPOINT so every node reaches the API via the load balancer."
-  run "$SUDO kubeadm init --control-plane-endpoint '$ENDPOINT' --upload-certs --pod-network-cidr='$POD_CIDR' --apiserver-advertise-address='$NODE_IP'"
+  info "Adding --apiserver-cert-extra-sans=$EXTRA_SANS so the TLS cert covers the VIP."
+  run "$SUDO kubeadm init --control-plane-endpoint '$ENDPOINT' --upload-certs --pod-network-cidr='$POD_CIDR' --apiserver-advertise-address='$NODE_IP' --apiserver-cert-extra-sans='$EXTRA_SANS'"
 
   # =========================================================================
   # STAGE 6: Configure kubectl for the current user
