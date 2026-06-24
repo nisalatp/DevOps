@@ -616,6 +616,25 @@ if [ "$FIRST" = "yes" ]; then
 
   ok "kubectl is ready (try: kubectl get nodes)."
 
+  # --- Grant cluster-admin to the kubernetes-admin user ---
+  # In Kubernetes 1.29+, the admin.conf user ("kubernetes-admin") no longer
+  # has cluster-admin privileges by default. Instead, it's in the
+  # "kubeadm:cluster-admins" group which needs an explicit ClusterRoleBinding.
+  #
+  # Without this binding:
+  #   - kubectl commands from admin.conf may fail with "forbidden" errors
+  #   - Additional control planes fail during "check-etcd" phase with:
+  #     "pods is forbidden: User kubernetes-admin cannot list resource pods"
+  #
+  # We use super-admin.conf (which HAS full access via the system:masters
+  # group) to create this binding. This is a one-time operation.
+  info "Granting cluster-admin to the kubernetes-admin user..."
+  $SUDO kubectl --kubeconfig /etc/kubernetes/super-admin.conf \
+    create clusterrolebinding kubeadm:cluster-admins \
+    --clusterrole=cluster-admin \
+    --group=kubeadm:cluster-admins 2>/dev/null || true
+  ok "kubernetes-admin now has cluster-admin privileges."
+
   # =========================================================================
   # STAGE 9: Install the Calico CNI (Container Network Interface) plugin
   # =========================================================================
