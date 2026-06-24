@@ -228,8 +228,8 @@ EOF
         apt-get install -y curl ca-certificates >/dev/null 2>&1 || true
 
         # Print a summary line so the user knows this VM is ready.
-        # #{...} is Ruby string interpolation — Vagrant replaces these
-        # with the actual values before the shell script runs.
+        # The values below (n['name'], n['role'], etc.) are inserted by
+        # Ruby string interpolation before the shell script runs.
         echo "[#{n['name']}] ready (role=#{n['role']}, #{n['mem']}MB/#{n['cpus']}cpu, ip=#{n['ip']})."
       SHELL
     end
