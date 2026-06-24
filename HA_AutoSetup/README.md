@@ -11,7 +11,7 @@
 
 ---
 
-**🧑‍🎓 If you're a beginner** — this project walks you through every stage of setting up Kubernetes, explaining what each command does and why it matters. You'll understand the infrastructure, not just run it.
+**🧑‍🎓 If you're a beginner** — this project walks you through every stage of setting up Kubernetes, explaining what each command does and why it matters. Every line of every script has detailed comments written for students. You'll understand the infrastructure, not just run it.
 
 **🏗️ If you're a professional** — use this to rapidly spin up disposable HA labs for testing, demos, or training. The scripts work on both Vagrant VMs and bare-metal / cloud servers.
 
@@ -115,7 +115,7 @@ By the end of this guide, you'll have a fully working **highly-available (HA) Ku
 ## 📁 Repository Contents
 
 ```
-KubeCluseter/
+HA_AutoSetup/
 ├── configure.sh            ← Interactive wizard: builds cluster.yaml by asking you questions
 ├── cluster.yaml            ← Your cluster definition (topology, IPs, VM sizes)
 ├── Vagrantfile             ← Reads cluster.yaml → creates VMs with hostnames, IPs, /etc/hosts
@@ -127,7 +127,19 @@ KubeCluseter/
 └── .gitignore
 ```
 
-> **💡 NisalaTP's note:** Each `setup-*.sh` script is **interactive and narrated** — it prints colour-coded stages explaining exactly what it's doing and why. You're not blindly running commands; you're learning infrastructure as you go.
+> **💡 NisalaTP's note:** Each `setup-*.sh` script is **interactive and narrated** — it prints colour-coded stages explaining exactly what it's doing and why. Every single line of every script has detailed comments explaining bash syntax, Kubernetes concepts, and Linux fundamentals. You're not blindly running commands; you're learning infrastructure as you go.
+
+### 🧠 Smart Defaults (Zero-Confusion Setup)
+
+When running on Vagrant, **every script auto-detects its settings** from `cluster.yaml` (which `configure.sh` generated). The scripts:
+
+- **Read all configuration** — VIP, control-plane IPs, Kubernetes version, Pod CIDR, Calico version
+- **Identify the node's role** — by matching the VM's hostname (`k8s-lb1`, `k8s-cp1`, etc.) against `cluster.yaml`
+- **Auto-decide MASTER vs BACKUP** — the first load balancer (`k8s-lb1`) is automatically the MASTER
+- **Auto-decide first vs additional CP** — the first control plane (`k8s-cp1`) automatically runs `kubeadm init`
+- **Pre-fill join commands** — saved to `/vagrant/join-commands.txt` (shared across all VMs)
+
+**Result:** Students just press **Enter** through every prompt. No typing IPs, no confusion about roles.
 
 ---
 
@@ -181,6 +193,17 @@ This reads your `cluster.yaml` and creates all the VMs with:
 - Static IPs on a host-only network
 - `/etc/hosts` pre-populated so every node can resolve every other node by name
 - `curl` pre-installed
+- **Descriptive names in VirtualBox** for easy identification:
+
+```
+k8s-lb1 [LoadBalancer | 192.168.56.5]
+k8s-lb2 [LoadBalancer | 192.168.56.6]
+k8s-cp1 [ControlPlane | 192.168.56.11]
+k8s-cp2 [ControlPlane | 192.168.56.12]
+k8s-cp3 [ControlPlane | 192.168.56.13]
+k8s-w1  [Worker | 192.168.56.21]
+k8s-w2  [Worker | 192.168.56.22]
+```
 
 **⏱ This takes 5–15 minutes** depending on your internet speed (it downloads the base box once, then uses linked clones).
 
@@ -206,13 +229,13 @@ curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/se
 
 | Stage | What It Does |
 |-------|-------------|
-| 1 — Gather settings | Reads your VIP and control-plane IPs (auto-detected from `cluster.yaml` on Vagrant) |
+| 1 — Gather settings | Auto-detects VIP, control-plane IPs, and MASTER/BACKUP role from `cluster.yaml` and hostname |
 | 2 — Install | Installs `haproxy` and `keepalived` via apt |
 | 3 — HAProxy config | Adds a TCP frontend on `:6443` that round-robins to your control-plane IPs |
 | 4 — Keepalived VIP | Configures the floating VIP with VRRP (one node is MASTER, others are BACKUP) |
 | 5 — Verify | Checks that port 6443 is listening and the VIP is assigned |
 
-> **💡 NisalaTP's note:** When it asks **"Is this the PRIMARY (MASTER) load balancer?"** — say **yes** on `k8s-lb1` and **no** on `k8s-lb2`. The MASTER gets a higher VRRP priority so it holds the VIP by default. If it fails, the VIP automatically moves to the BACKUP.
+> **💡 NisalaTP's note:** On Vagrant, the script **auto-detects** whether this node is MASTER or BACKUP from the hostname — `k8s-lb1` (the first LB in `cluster.yaml`) automatically becomes MASTER, all others become BACKUP. Just press **Enter** through all prompts.
 
 > ⚠️ **The backends will show as DOWN** at this point — that's completely normal. The control planes haven't been set up yet, so there's nothing listening on their `:6443`.
 
@@ -227,21 +250,22 @@ vagrant ssh k8s-cp1
 curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
 ```
 
-**When it asks "Is this the FIRST control plane?" — answer `yes`.**
+**On Vagrant, the script auto-detects that `k8s-cp1` is the first control plane.** Just press **Enter** through all prompts.
 
 **What happens inside the script:**
 
 | Stage | What It Does |
 |-------|-------------|
-| 1 — Settings | Confirms the VIP endpoint, node IP, Kubernetes version, pod CIDR |
+| 1 — Settings | Auto-detects VIP endpoint, node IP, K8s version, pod CIDR, and Calico version from `cluster.yaml` |
 | 2 — Swap | Disables swap (kubelet requires this) |
 | 3 — Kernel | Loads `overlay` and `br_netfilter` modules; enables IP forwarding |
 | 4 — containerd | Installs and configures containerd with `SystemdCgroup = true` |
 | 5 — Kube tools | Adds the official Kubernetes apt repo; installs `kubeadm`, `kubelet`, `kubectl` |
-| 6 — kubeadm init | Runs `kubeadm init` with `--control-plane-endpoint` pointing to the VIP |
-| 7 — kubectl | Copies the admin kubeconfig to your home directory |
-| 8 — Calico | Installs the Tigera operator and creates an IP pool matching your pod CIDR |
-| 9 — Join commands | Generates and prints both the **control-plane join** and **worker join** commands |
+| 6 — Kubelet IP | Pins the kubelet to the correct cluster IP (prevents Vagrant's NAT interface from leaking) |
+| 7 — kubeadm init | Runs `kubeadm init` with `--control-plane-endpoint` pointing to the VIP and `--apiserver-cert-extra-sans` for the VIP |
+| 8 — kubectl | Copies the admin kubeconfig to your home directory |
+| 9 — Calico | Installs the Tigera operator and creates an IP pool matching your pod CIDR |
+| 10 — Join commands | Generates and prints both the **control-plane join** and **worker join** commands |
 
 > **💡 NisalaTP's note:** On Vagrant, the join commands are automatically saved to `/vagrant/join-commands.txt` — a shared folder that all VMs can access. This means when you run the scripts on the other nodes, the join command is **pre-filled** for you. Just press Enter.
 
@@ -261,9 +285,7 @@ vagrant ssh k8s-cp3
 curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
 ```
 
-**When it asks "Is this the FIRST control plane?" — answer `no`.**
-
-The script will auto-detect the join command from `/vagrant/join-commands.txt`. Just press **Enter** when prompted.
+**On Vagrant, the script auto-detects that `k8s-cp2`/`k8s-cp3` are NOT the first control plane.** It will default the "Is this the FIRST control plane?" question to **no** and auto-fill the join command from `/vagrant/join-commands.txt`. Just press **Enter** through all prompts.
 
 ---
 
@@ -281,7 +303,7 @@ vagrant ssh k8s-w2
 curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
 ```
 
-The join command is auto-filled from `/vagrant/join-commands.txt`. Press **Enter** to accept it.
+The K8s version and join command are both auto-filled — from `cluster.yaml` and `/vagrant/join-commands.txt` respectively. Press **Enter** through all prompts.
 
 ---
 
@@ -496,6 +518,19 @@ vagrant up
 ### Pod CIDR conflict
 
 If you see pods stuck in `ContainerCreating` with network errors, your pod CIDR may overlap with your host network. Re-run `./configure.sh` and choose a different pod CIDR (e.g., `10.245.0.0/16`).
+
+### TLS certificate error: "certificate is valid for X, not Y"
+
+**Cause:** The API server certificate doesn't include the VIP or a NAT interface IP as a Subject Alternative Name (SAN).
+
+This is already handled automatically by the scripts — `setup-controlplane.sh` passes `--apiserver-cert-extra-sans` with the VIP hostname and IP, and pins the kubelet to the correct cluster IP. If you still see this error:
+
+```bash
+# Reset and re-run the control-plane setup:
+sudo kubeadm reset -f
+sudo rm -rf /etc/kubernetes /var/lib/etcd $HOME/.kube
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
+```
 
 ---
 
