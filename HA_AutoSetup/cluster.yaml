@@ -1,24 +1,81 @@
-# Default cluster — re-run ./configure.sh to change counts, subnet, box, IPs or RAM.
+# =============================================================================
+# cluster.yaml — Cluster Configuration File
+# =============================================================================
+#
+# This file defines the entire layout of your Kubernetes HA cluster.
+# It is read by the Vagrantfile to create the VMs, and by the setup
+# scripts for default values.
+#
+# TO REGENERATE:  ./configure.sh   (interactive — asks questions, writes this file)
+# TO EDIT BY HAND: change any value below and run "vagrant up" or "vagrant reload".
+# =============================================================================
+
+# "subnet" — the first three octets of the private IP range.
+# All VMs will have IPs in this /24 network (e.g., 192.168.56.1 - 192.168.56.254).
+# This is a VirtualBox "host-only" network — only the VMs and your host can see it.
 subnet: "192.168.56"
+
+# "vip" — the Virtual IP (floating IP) managed by Keepalived.
+# This is the single address that kubectl and kubelets use to reach the API server.
+# Keepalived moves this IP to whichever load balancer is currently healthy.
+# It must be in the same subnet but NOT assigned to any real VM.
 vip: "192.168.56.10"
+
+# "box" — the Vagrant base box (pre-built VM image) used for all VMs.
 # Minimal, low-footprint base image (fully apt/systemd compatible).
 # Ubuntu alternative: bento/ubuntu-24.04
 box: "bento/debian-12"
+
+# "k8s_version" — the Kubernetes minor version to install.
+# This determines which apt repository is used (pkgs.k8s.io/core:/stable:/v1.36/deb/).
+# All nodes in the cluster MUST run the same Kubernetes version.
 k8s_version: "v1.36"
+
+# "pod_cidr" — the IP range assigned to Pods (containers) inside the cluster.
+# Calico (the CNI plugin) uses this range to give each Pod its own IP address.
+# IMPORTANT: This range must NOT overlap with the VM subnet (192.168.56.0/24)
+# or your home/office network. 10.244.0.0/16 gives ~65,000 Pod IPs.
 pod_cidr: "10.244.0.0/16"
+
+# "calico_version" — the version of the Calico CNI plugin to install.
+# Calico handles Pod-to-Pod networking across nodes using VXLAN tunnels.
 calico_version: "v3.29.1"
-# Per-role VM sizing (MB / vCPUs). Tuned to run 7 VMs on a 16 GB laptop.
+
+# "resources" — per-role VM sizing (RAM in MB / number of vCPUs).
+# These values are tuned to run a 7-VM cluster on a 16 GB laptop.
+# Total estimated RAM: 2×512 + 3×2048 + 2×1536 = 10,240 MB (~10 GB).
+# Your host OS needs 4-6 GB, so 16 GB total RAM is the minimum.
 resources:
+  # Load balancers — only run HAProxy + Keepalived (very lightweight)
   lb: { memory: 512,  cpus: 1 }
+  # Control planes — run etcd, API server, scheduler, controller-manager
+  # etcd + API server need at least ~1800 MB; 2048 MB gives comfortable headroom
   cp: { memory: 2048, cpus: 2 }
+  # Workers — run your application Pods; RAM depends on workload
   wk: { memory: 1536, cpus: 1 }
+
+# "load_balancers" — list of load-balancer VMs.
+# Each entry has a hostname ("name") and a static IP ("ip").
+# These nodes run HAProxy (forwards API traffic to control planes)
+# and Keepalived (manages the floating VIP between them).
+# Having 2 load balancers means if lb1 dies, lb2 takes over the VIP.
 load_balancers:
   - { name: k8s-lb1, ip: 192.168.56.5 }
   - { name: k8s-lb2, ip: 192.168.56.6 }
+
+# "control_planes" — list of control-plane VMs.
+# These nodes run the Kubernetes "brain": API server, etcd, scheduler, etc.
+# Using 3 control planes gives etcd quorum (2 of 3 must agree), so the
+# cluster survives if 1 control plane dies. Using 5 would tolerate 2 failures.
 control_planes:
   - { name: k8s-cp1, ip: 192.168.56.11 }
   - { name: k8s-cp2, ip: 192.168.56.12 }
   - { name: k8s-cp3, ip: 192.168.56.13 }
+
+# "workers" — list of worker VMs.
+# These nodes run your application containers (Pods).
+# Workers don't run control-plane components — they just receive work
+# from the scheduler and report status back to the API server.
 workers:
   - { name: k8s-w1, ip: 192.168.56.21 }
   - { name: k8s-w2, ip: 192.168.56.22 }

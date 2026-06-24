@@ -1,63 +1,221 @@
-# Vagrantfile — builds the VMs described in cluster.yaml.
-# It does NOT install Kubernetes; that is done by the interactive
-# setup-*.sh scripts so you can watch and learn each stage.
+# =============================================================================
+# Vagrantfile — Builds the VMs described in cluster.yaml
+# =============================================================================
 #
-# Footprint optimisations for running ~7 VMs at once:
-#   * a minimal base box (see cluster.yaml: box)
-#   * VirtualBox linked clones  -> the VMs share ONE base disk image
-#   * trimmed virtual hardware  -> tiny video RAM, no USB, KVM paravirt
-#   * right-sized RAM per role  -> see cluster.yaml: resources
+# WHAT THIS FILE DOES:
+#   This is a Ruby script (Vagrantfiles are Ruby) that Vagrant reads to
+#   know what virtual machines to create. It reads cluster.yaml for the
+#   list of nodes (load balancers, control planes, workers), then creates
+#   a VirtualBox VM for each one.
+#
+#   IMPORTANT: This file does NOT install Kubernetes. It only creates the
+#   VMs with basic networking. The actual Kubernetes setup is done by the
+#   interactive setup-*.sh scripts, so students can watch and learn each step.
+#
+# WHAT IS VAGRANT?
+#   Vagrant is a tool that automates the creation and management of virtual
+#   machines. You describe your VMs in a Vagrantfile (this file), and then:
+#     vagrant up       → creates and starts all VMs
+#     vagrant ssh name → SSH into a specific VM
+#     vagrant destroy  → deletes all VMs
+#
+# FOOTPRINT OPTIMISATIONS:
+#   Running ~7 VMs at once on a laptop needs careful resource management.
+#   This Vagrantfile uses several tricks to keep the RAM/disk usage low:
+#     * A minimal base box (see cluster.yaml: box) — small OS image
+#     * VirtualBox linked clones → all VMs share ONE base disk image,
+#       each VM only stores the differences (saves several GB of disk)
+#     * Trimmed virtual hardware → tiny video RAM, no USB, no audio
+#     * Right-sized RAM per role → LBs get 512MB, workers 1.5GB, etc.
+#
+# HOW TO USE:
+#   1. First run:  ./configure.sh   (generates cluster.yaml)
+#   2. Then run:   vagrant up       (creates all VMs)
+#   3. Then SSH into each VM and run the appropriate setup script
+# =============================================================================
+
+# "require 'yaml'" loads Ruby's built-in YAML parser library.
+# We need this to read and parse the cluster.yaml configuration file.
 require 'yaml'
 
+# Load the cluster configuration from cluster.yaml.
+# File.join(__dir__, 'cluster.yaml') builds the absolute path to cluster.yaml
+# by combining __dir__ (the directory containing this Vagrantfile) with the
+# filename. This ensures it works regardless of where you run "vagrant up" from.
 cfg = YAML.load_file(File.join(__dir__, 'cluster.yaml'))
+
+# Extract the per-role resource settings from the config.
+# If "resources:" is missing from cluster.yaml, default to an empty hash.
 res = cfg['resources'] || {}
+
+# Default RAM (in MB) for each role if not specified in cluster.yaml.
+# These are tuned for lab use on a 16 GB laptop:
+#   lb (load balancer) = 512 MB  — HAProxy is very lightweight
+#   cp (control plane)  = 2048 MB — etcd + API server need ~1.8 GB minimum
+#   wk (worker)         = 1536 MB — depends on workload, 1.5 GB is safe for labs
 DEF_MEM = { 'lb' => 512,  'cp' => 2048, 'wk' => 1536 }
+
+# Default vCPUs for each role. Control planes benefit from 2 CPUs (etcd
+# performance), load balancers and workers can run fine on 1 CPU each.
 DEF_CPU = { 'lb' => 1,    'cp' => 2,    'wk' => 1 }
 
+# =============================================================================
+# Build a flat list of all nodes from the YAML groups
+# =============================================================================
+# cluster.yaml has three groups: load_balancers, control_planes, workers.
+# We iterate through each group, read the node definitions (name + IP),
+# and add the role, memory, and CPU settings to each node.
+# The result is a flat array like:
+#   [ { "name"=>"k8s-lb1", "ip"=>"192.168.56.5", "role"=>"lb", "mem"=>512, "cpus"=>1 },
+#     { "name"=>"k8s-cp1", "ip"=>"192.168.56.11", "role"=>"cp", "mem"=>2048, "cpus"=>2 },
+#     ... ]
 nodes = []
+
+# This hash maps short role codes to their YAML group names.
 { 'lb' => 'load_balancers', 'cp' => 'control_planes', 'wk' => 'workers' }.each do |role, group|
+  # For each node in this group (or empty array if the group is missing)...
   (cfg[group] || []).each do |n|
+    # Look up memory/CPU from cluster.yaml's resources section, falling back
+    # to the defaults if not specified.
     mem  = (res[role] && res[role]['memory']) || DEF_MEM[role]
     cpus = (res[role] && res[role]['cpus'])   || DEF_CPU[role]
+
+    # Add the node to our flat list with role, memory, and CPU info.
+    # n.merge() creates a new hash combining the original node data
+    # (name, ip) with the new fields (role, mem, cpus).
     nodes << n.merge('role' => role, 'mem' => mem, 'cpus' => cpus)
   end
 end
 
-# /etc/hosts content shared by every machine (all nodes + the VIP name).
+# =============================================================================
+# Build the /etc/hosts content shared by every VM
+# =============================================================================
+# We want every VM to be able to reach every other VM by hostname
+# (e.g., "ping k8s-cp1" instead of "ping 192.168.56.11").
+# We do this by writing all node IPs and hostnames into /etc/hosts.
+#
+# /etc/hosts is a local DNS override file — the OS checks it BEFORE
+# querying DNS servers. Format: one line per entry = "IP  hostname".
 hosts = nodes.map { |n| "#{n['ip']} #{n['name']}" }.join("\n")
+
+# Also add the VIP hostname (k8s-vip) so all nodes can resolve it.
+# This is the floating IP managed by Keepalived on the load balancers.
 hosts += "\n#{cfg['vip']} k8s-vip"
 
+# =============================================================================
+# Define the Vagrant VMs
+# =============================================================================
+# Vagrant.configure('2') starts a Vagrant configuration block.
+# The '2' is the configuration version (Vagrant 1.1+).
 Vagrant.configure('2') do |config|
+
+  # Set the base box (OS image) for all VMs.
+  # A "box" is a pre-built VM image — like a template that each VM clones from.
   config.vm.box = cfg['box']
+
+  # Increase the boot timeout from the default 300s to 600s (10 minutes).
+  # On slower machines, VMs may take a while to boot, especially the first
+  # time when the base box needs to be downloaded.
   config.vm.boot_timeout = 600
 
+  # Iterate over each node and create a VM for it.
   nodes.each do |n|
+
+    # config.vm.define creates a named VM.
+    # The name (e.g., "k8s-cp1") is used for:
+    #   - "vagrant ssh k8s-cp1" to SSH into this specific VM
+    #   - "vagrant destroy k8s-cp1" to delete just this VM
     config.vm.define n['name'] do |m|
+
+      # Set the VM's hostname (appears in the shell prompt).
       m.vm.hostname = n['name']
+
+      # Create a private (host-only) network interface with a static IP.
+      # "private_network" means this network is only visible to the VMs
+      # and the host machine — it's isolated from the internet.
+      # This is how the cluster nodes communicate with each other.
       m.vm.network 'private_network', ip: n['ip']
 
+      # =================================================================
+      # VirtualBox provider-specific settings
+      # =================================================================
+      # These settings are specific to VirtualBox (the hypervisor).
+      # Other providers (VMware, Hyper-V) would use different settings.
       m.vm.provider 'virtualbox' do |vb|
+
+        # Name shown in the VirtualBox GUI
         vb.name         = n['name']
+
+        # RAM allocation in MB (from cluster.yaml or defaults)
         vb.memory       = n['mem']
+
+        # Number of virtual CPUs (from cluster.yaml or defaults)
         vb.cpus         = n['cpus']
-        vb.linked_clone = true                                   # share the base disk
-        vb.customize ['modifyvm', :id, '--vram', '9']            # minimal video RAM (headless)
-        vb.customize ['modifyvm', :id, '--paravirtprovider', 'kvm']  # faster Linux guest
-        vb.customize ['modifyvm', :id, '--usb', 'off']           # drop unneeded controllers
+
+        # LINKED CLONES — this is a major disk-space optimisation!
+        # Without this, each VM gets a full copy of the base disk (2+ GB each).
+        # With linked clones, VMs share ONE base disk and only store their
+        # differences. This can save 10+ GB when running 7 VMs.
+        vb.linked_clone = true
+
+        # Set video memory to the minimum (9 MB) since these are headless
+        # VMs — nobody is looking at a GUI. Default is 12-16 MB per VM.
+        vb.customize ['modifyvm', :id, '--vram', '9']
+
+        # Use KVM paravirtualization for better performance on Linux guests.
+        # "Paravirtualization" means the guest OS knows it's in a VM and
+        # uses optimised system calls instead of emulating real hardware.
+        vb.customize ['modifyvm', :id, '--paravirtprovider', 'kvm']
+
+        # Disable USB controller — not needed for server VMs and saves
+        # a small amount of overhead.
+        vb.customize ['modifyvm', :id, '--usb', 'off']
+
+        # Disable audio — servers don't need sound output.
         vb.customize ['modifyvm', :id, '--audio-driver', 'none']
       end
 
-      # Base config only: hostnames resolvable + curl present.
+      # =================================================================
+      # Shell provisioner — runs a script inside the VM after boot
+      # =================================================================
+      # This is the ONLY automated setup we do. It just:
+      #   1. Writes /etc/hosts so all VMs can resolve each other's names
+      #   2. Installs curl and ca-certificates (needed by the setup scripts)
+      # Everything else is done manually by the setup scripts, so students
+      # can watch and learn each step.
       m.vm.provision 'shell', inline: <<-SHELL
+        # Exit on any error
         set -e
+
+        # Only add entries to /etc/hosts if they haven't been added yet.
+        # This makes the provisioner idempotent (safe to run multiple times).
+        # We check for "k8s-vip" as a marker — if it's already there,
+        # we've already added the entries.
         if ! grep -q 'k8s-vip' /etc/hosts; then
+          # Append all node hostnames and IPs to /etc/hosts.
+          # The heredoc (<<'EOF' ... EOF) pastes multi-line text.
+          # Single quotes around 'EOF' prevent variable interpolation
+          # (but Vagrant's Ruby interpolation with #{} still works because
+          # Ruby processes the heredoc before the shell sees it).
           cat >> /etc/hosts <<'EOF'
 #{hosts}
 EOF
         fi
+
+        # Set environment variable to prevent apt from showing interactive
+        # prompts (e.g., "Do you want to configure the timezone?").
         export DEBIAN_FRONTEND=noninteractive
+
+        # Update the package list silently (ignore errors if no internet yet)
         apt-get update -y  >/dev/null 2>&1 || true
+
+        # Install curl (for downloading setup scripts) and ca-certificates
+        # (for HTTPS connections). These are the minimum prerequisites.
         apt-get install -y curl ca-certificates >/dev/null 2>&1 || true
+
+        # Print a summary line so the user knows this VM is ready.
+        # #{...} is Ruby string interpolation — Vagrant replaces these
+        # with the actual values before the shell script runs.
         echo "[#{n['name']}] ready (role=#{n['role']}, #{n['mem']}MB/#{n['cpus']}cpu, ip=#{n['ip']})."
       SHELL
     end
