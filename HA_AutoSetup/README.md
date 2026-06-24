@@ -196,13 +196,13 @@ This reads your `cluster.yaml` and creates all the VMs with:
 - **Descriptive names in VirtualBox** for easy identification:
 
 ```
-k8s-lb1 (LoadBalancer, 192.168.56.5)
-k8s-lb2 (LoadBalancer, 192.168.56.6)
-k8s-cp1 (ControlPlane, 192.168.56.11)
-k8s-cp2 (ControlPlane, 192.168.56.12)
-k8s-cp3 (ControlPlane, 192.168.56.13)
-k8s-w1  (Worker, 192.168.56.21)
-k8s-w2  (Worker, 192.168.56.22)
+k8s-lb1-LoadBalancer-192.168.56.5
+k8s-lb2-LoadBalancer-192.168.56.6
+k8s-cp1-ControlPlane-192.168.56.11
+k8s-cp2-ControlPlane-192.168.56.12
+k8s-cp3-ControlPlane-192.168.56.13
+k8s-w1-Worker-192.168.56.21
+k8s-w2-Worker-192.168.56.22
 ```
 
 **⏱ This takes 5–15 minutes** depending on your internet speed (it downloads the base box once, then uses linked clones).
