@@ -553,14 +553,20 @@ if [ "$FIRST" = "yes" ]; then
 
   info "Patching kubeconfig files to use $KUBECONFIG_SERVER (instead of NAT IP)."
 
-  # Loop through all four kubeconfig files that kubeadm generates.
+  # Loop through all kubeconfig files that kubeadm generates.
   # For each file:
   #   1. Check if it exists (-f test)
   #   2. Use sed to replace any "server: https://..." line with the correct URL
   #      sed -i = edit the file in-place
   #      's|...|...|g' = substitute (using | as delimiter instead of / to avoid
   #      escaping the slashes in URLs)
+  #
+  # NOTE: In Kubernetes 1.29+, kubeadm also creates "super-admin.conf".
+  # This file is used for privileged operations like "upload-certs".
+  # If we don't patch it, upload-certs will still connect to 10.0.2.15
+  # and fail with a TLS certificate error.
   for cfg in /etc/kubernetes/admin.conf \
+             /etc/kubernetes/super-admin.conf \
              /etc/kubernetes/kubelet.conf \
              /etc/kubernetes/controller-manager.conf \
              /etc/kubernetes/scheduler.conf; do
@@ -774,6 +780,7 @@ else
   info "Patching kubeconfig files to use $KUBECONFIG_SERVER (instead of NAT IP)."
 
   for cfg in /etc/kubernetes/admin.conf \
+             /etc/kubernetes/super-admin.conf \
              /etc/kubernetes/kubelet.conf \
              /etc/kubernetes/controller-manager.conf \
              /etc/kubernetes/scheduler.conf; do
