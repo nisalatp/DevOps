@@ -639,7 +639,42 @@ EOF
   ok "Calico is installing. Nodes turn Ready once its pods are Running."
 
   # =========================================================================
-  # STAGE 10: Generate join commands for the other nodes
+  # STAGE 11: Wait for the API server to stabilise
+  # =========================================================================
+  # After installing Calico, the API server is busy processing many new
+  # resources (CustomResourceDefinitions, Deployments, DaemonSets, etc.).
+  # If we immediately run upload-certs, it can fail with:
+  #   "client rate limiter Wait returned an error: rate: Wait(n=1) would
+  #    exceed context deadline"
+  # This means the API server is overloaded and timing out requests.
+  #
+  # FIX: Wait until the API server is responsive before proceeding.
+  # We use "kubectl cluster-info" as a lightweight health check.
+  stage "Waiting for the API server to stabilise"
+  info "The API server needs a moment to process the Calico resources..."
+
+  # Retry loop: try up to 12 times (12 × 10s = 2 minutes max wait).
+  # Each iteration runs "kubectl cluster-info" which contacts the API server.
+  # If it succeeds, the API is ready and we break out of the loop.
+  # If it fails, we wait 10 seconds and try again.
+  RETRIES=12
+  for i in $(seq 1 $RETRIES); do
+    if kubectl cluster-info &>/dev/null; then
+      ok "API server is responsive."
+      break
+    fi
+    info "Attempt $i/$RETRIES — API server not ready yet, waiting 10s..."
+    sleep 10
+  done
+
+  # Extra grace period: even after cluster-info succeeds, give the API
+  # server a few more seconds to finish processing background resources.
+  # This prevents the rate limiter from kicking in during upload-certs.
+  info "Giving the API server 15s grace period to finish background work..."
+  sleep 15
+
+  # =========================================================================
+  # STAGE 12: Generate join commands for the other nodes
   # =========================================================================
   # Other nodes need two pieces of information to join the cluster:
   #   1. A bootstrap token  — a short-lived secret that proves the new

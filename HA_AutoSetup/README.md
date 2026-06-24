@@ -266,7 +266,8 @@ curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/se
 | 8 — Kubeconfig fix | Patches kubeconfig files to use the VIP endpoint (fixes NAT IP leak in `server:` field) |
 | 9 — kubectl | Copies the admin kubeconfig to your home directory |
 | 10 — Calico | Installs the Tigera operator and creates an IP pool matching your pod CIDR |
-| 11 — Join commands | Generates and prints both the **control-plane join** and **worker join** commands |
+| 11 — API wait | Waits for the API server to finish processing Calico resources (prevents rate-limit timeout) |
+| 12 — Join commands | Generates and prints both the **control-plane join** and **worker join** commands |
 
 > **💡 NisalaTP's note:** On Vagrant, the join commands are automatically saved to `/vagrant/join-commands.txt` — a shared folder that all VMs can access. This means when you run the scripts on the other nodes, the join command is **pre-filled** for you. Just press Enter.
 
