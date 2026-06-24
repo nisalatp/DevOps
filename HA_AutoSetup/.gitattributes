@@ -1,0 +1,5 @@
+# Force Unix line endings for all shell scripts so they work in WSL/Git Bash on Windows.
+# Without this, Git on Windows converts LF → CRLF, which breaks #!/usr/bin/env bash.
+*.sh text eol=lf
+Vagrantfile text eol=lf
+*.yaml text eol=lf
