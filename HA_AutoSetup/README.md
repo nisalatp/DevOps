@@ -136,8 +136,8 @@ KubeCluseter/
 ### Step 1 — Clone This Repository
 
 ```bash
-git clone https://github.com/nisalatp/DevOps.git
-cd DevOps/DevOps/K8s/HA_AutoSetup
+git clone -b K8s https://github.com/nisalatp/DevOps.git
+cd DevOps/HA_AutoSetup
 ```
 
 ---
@@ -193,13 +193,13 @@ SSH into **each load balancer** and run the load balancer setup script:
 ```bash
 # Terminal 1 — on k8s-lb1:
 vagrant ssh k8s-lb1
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-loadbalancer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-loadbalancer.sh | bash
 ```
 
 ```bash
 # Terminal 2 — on k8s-lb2:
 vagrant ssh k8s-lb2
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-loadbalancer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-loadbalancer.sh | bash
 ```
 
 **What happens inside the script:**
@@ -224,7 +224,7 @@ This is the most important step. The first control plane bootstraps the entire c
 
 ```bash
 vagrant ssh k8s-cp1
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
 ```
 
 **When it asks "Is this the FIRST control plane?" — answer `yes`.**
@@ -252,13 +252,13 @@ curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_
 ```bash
 # On k8s-cp2:
 vagrant ssh k8s-cp2
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
 ```
 
 ```bash
 # On k8s-cp3:
 vagrant ssh k8s-cp3
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
 ```
 
 **When it asks "Is this the FIRST control plane?" — answer `no`.**
@@ -272,13 +272,13 @@ The script will auto-detect the join command from `/vagrant/join-commands.txt`. 
 ```bash
 # On k8s-w1:
 vagrant ssh k8s-w1
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
 ```
 
 ```bash
 # On k8s-w2:
 vagrant ssh k8s-w2
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
 ```
 
 The join command is auto-filled from `/vagrant/join-commands.txt`. Press **Enter** to accept it.
@@ -322,16 +322,16 @@ The setup scripts are **not tied to Vagrant** — they work on any Debian/Ubuntu
 
 ```bash
 # Load balancers:
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-loadbalancer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-loadbalancer.sh | bash
 
 # First control plane (answer "yes" to FIRST):
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
 
 # Additional control planes (answer "no" to FIRST, then paste the join command):
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
 
 # Workers (paste the worker join command when prompted):
-curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/main/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
 ```
 
 > **🏗️ Pro tip:** For production bare-metal setups, make sure your servers have DNS entries or `/etc/hosts` entries for each node hostname before running the scripts.

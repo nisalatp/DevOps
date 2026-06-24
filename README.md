@@ -1,8 +1,8 @@
-# 🛠️ DevOps
+# ☸️ Kubernetes Automation Scripts
 
-**A collection of production-grade automation scripts and tools by [Nisala Aloka Bandara (NisalaTP)](https://github.com/nisalatp).**
+**Branch: `K8s`** — All Kubernetes-related automation tools.
 
-Interactive, narrated, and educational — each project walks you through the infrastructure, not just runs it.
+*Part of the [DevOps](https://github.com/nisalatp/DevOps) collection by [Nisala Aloka Bandara (NisalaTP)](https://github.com/nisalatp).*
 
 ---
 
@@ -10,31 +10,30 @@ Interactive, narrated, and educational — each project walks you through the in
 
 | Path | Description | Status |
 |------|-------------|:------:|
-| [`DevOps/K8s/HA_AutoSetup`](DevOps/K8s/HA_AutoSetup/) | Build a highly-available Kubernetes cluster from scratch with HAProxy, Keepalived VIP, kubeadm, and Calico. Works on Vagrant and bare metal. | ✅ Ready |
+| [`HA_AutoSetup/`](HA_AutoSetup/) | Build a highly-available Kubernetes cluster from scratch — HAProxy + Keepalived VIP, kubeadm, Calico CNI. Works on Vagrant and bare metal. | ✅ Ready |
 
-> More automation projects coming soon — Docker, CI/CD, monitoring, and beyond.
+> More Kubernetes automation projects coming soon.
 
 ---
 
 ## 🚀 Quick Start
 
-Each project has its own detailed `README.md` with step-by-step instructions. Pick a project from the table above and follow its guide.
-
-**Example — HA Kubernetes cluster:**
-
 ```bash
-git clone https://github.com/nisalatp/DevOps.git
-cd DevOps/DevOps/K8s/HA_AutoSetup
+git clone -b K8s https://github.com/nisalatp/DevOps.git
+cd DevOps/HA_AutoSetup
 ./configure.sh     # Interactive cluster configurator
 vagrant up         # Create the VMs
-# Then follow the README to set up each node
+# Then follow the HA_AutoSetup README to set up each node
 ```
 
 ---
 
-## 📄 License
+## 🗂️ Other Branches
 
-This project is open-source and available under the [MIT License](LICENSE).
+| Branch | Category |
+|--------|----------|
+| `main` | Root index — overview of all DevOps projects |
+| **`K8s`** | ← You are here — Kubernetes automation |
 
 ---
 
