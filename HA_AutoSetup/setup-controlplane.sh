@@ -514,7 +514,22 @@ if [ "$FIRST" = "yes" ]; then
   stage "Initialising the control plane (kubeadm init)"
   info "Using --control-plane-endpoint=$ENDPOINT so every node reaches the API via the load balancer."
   info "Adding --apiserver-cert-extra-sans=$EXTRA_SANS so the TLS cert covers the VIP."
-  run "$SUDO kubeadm init --control-plane-endpoint '$ENDPOINT' --upload-certs --pod-network-cidr='$POD_CIDR' --apiserver-advertise-address='$NODE_IP' --apiserver-cert-extra-sans='$EXTRA_SANS'"
+
+  # We capture the full kubeadm init output to a temp file because it
+  # contains the join commands and certificate key that we'll need later.
+  # "tee" sends the output to BOTH the terminal (so the student sees it)
+  # AND the file (so we can parse it). We use this instead of re-running
+  # "kubeadm init phase upload-certs" later, because that command has a
+  # known bug on Vagrant VMs: it re-detects the default-route IP (NAT
+  # adapter 10.0.2.15) and tries to connect to it, causing TLS failures.
+  INIT_LOG="/tmp/kubeadm-init-output.log"
+  $SUDO kubeadm init \
+    --control-plane-endpoint "$ENDPOINT" \
+    --upload-certs \
+    --pod-network-cidr="$POD_CIDR" \
+    --apiserver-advertise-address="$NODE_IP" \
+    --apiserver-cert-extra-sans="$EXTRA_SANS" \
+    2>&1 | tee "$INIT_LOG"
 
   # =========================================================================
   # STAGE 7: Fix kubeconfig server endpoints
@@ -680,29 +695,50 @@ EOF
   sleep 15
 
   # =========================================================================
-  # STAGE 12: Generate join commands for the other nodes
+  # STAGE 12: Extract join commands and distribute certificates
   # =========================================================================
-  # Other nodes need two pieces of information to join the cluster:
-  #   1. A bootstrap token  — a short-lived secret that proves the new
-  #      node was invited (prevents random machines from joining).
-  #   2. A certificate key  — (control planes only) the encryption key
-  #      to download the shared control-plane certificates.
-  stage "Generating the join commands for the other nodes"
+  # During kubeadm init (Stage 7), we captured the full output to a log file.
+  # That output contains the complete join commands including the certificate
+  # key — we parse them from there instead of re-running upload-certs.
+  #
+  # WHY NOT RE-RUN upload-certs?
+  #   "kubeadm init phase upload-certs" has a known issue on Vagrant VMs:
+  #   it internally re-detects the node's default-route IP (the NAT adapter
+  #   10.0.2.15), regenerates admin.conf using that address, and then fails
+  #   with a TLS certificate error because 10.0.2.15 isn't in the cert SANs.
+  #   Patching kubeconfig files doesn't help because kubeadm overwrites them.
+  #
+  # SOLUTION: Parse the join commands from the kubeadm init output (which
+  # already ran --upload-certs successfully), and also copy the PKI
+  # certificates to /vagrant/pki for manual distribution as a fallback.
+  stage "Extracting join commands and distributing certificates"
 
-  # Generate a new bootstrap token and print the complete join command.
-  # "kubeadm token create --print-join-command" outputs something like:
+  # --- Extract the certificate key from the kubeadm init output ---
+  # The init output contains a line like:
+  #   --certificate-key abcdef1234567890...
+  # We extract just the hex key (64 characters).
+  CKEY=$(grep -oP '(?<=--certificate-key )[a-f0-9]+' "$INIT_LOG" | head -1 || true)
+
+  if [ -n "$CKEY" ]; then
+    ok "Certificate key extracted from kubeadm init output."
+  else
+    warn "Could not extract certificate key from init output."
+    warn "You may need to manually run: sudo kubeadm init phase upload-certs --upload-certs"
+  fi
+
+  # --- Generate a fresh bootstrap token ---
+  # Tokens expire after 24h, so we create a new one to be safe.
+  # "kubeadm token create --print-join-command" outputs the full command:
   #   kubeadm join k8s-vip:6443 --token abc123.xyz --discovery-token-ca-cert-hash sha256:...
   WJOIN="sudo $(kubeadm token create --print-join-command)"
 
-  # Upload certificates and get the certificate key.
-  # "kubeadm init phase upload-certs --upload-certs" re-uploads the
-  # control-plane certificates and prints a new decryption key.
-  # The key is on the last line of the output.
-  CKEY=$($SUDO kubeadm init phase upload-certs --upload-certs | tail -n1)
-
   # Build the control-plane join command by adding --control-plane and
   # the certificate key to the worker join command.
-  CPJOIN="$WJOIN --control-plane --certificate-key $CKEY"
+  if [ -n "$CKEY" ]; then
+    CPJOIN="$WJOIN --control-plane --certificate-key $CKEY"
+  else
+    CPJOIN="$WJOIN --control-plane"
+  fi
 
   echo   # Blank line
 
@@ -716,11 +752,24 @@ EOF
   echo "      $WJOIN"
   echo
 
-  # If running in Vagrant, save the join commands to a shared file.
-  # /vagrant is a shared folder that all Vagrant VMs can access.
-  # This lets the other setup scripts (setup-worker.sh, etc.) read
-  # the join commands automatically without manual copy-pasting.
+  # --- Copy PKI certificates to /vagrant for manual distribution ---
+  # As a fallback (in case the certificate key expires before the other
+  # CPs join), we also copy the shared PKI certificates to /vagrant.
+  # The other control-plane setup scripts can use these directly.
+  #
+  # Only the CA and SA certificates need to be shared — node-specific
+  # certs (apiserver.crt, etcd/server.crt) are regenerated on each node.
   if [ -d /vagrant ]; then
+    $SUDO mkdir -p /vagrant/pki/etcd
+    for f in ca.crt ca.key sa.key sa.pub front-proxy-ca.crt front-proxy-ca.key; do
+      [ -f "/etc/kubernetes/pki/$f" ] && $SUDO cp "/etc/kubernetes/pki/$f" "/vagrant/pki/$f"
+    done
+    for f in ca.crt ca.key; do
+      [ -f "/etc/kubernetes/pki/etcd/$f" ] && $SUDO cp "/etc/kubernetes/pki/etcd/$f" "/vagrant/pki/etcd/$f"
+    done
+    ok "PKI certificates copied to /vagrant/pki/ (fallback for manual cert distribution)."
+
+    # Save join commands to the shared file.
     # printf %q escapes special characters so the commands can be safely
     # sourced (loaded) by another script using ". /vagrant/join-commands.txt"
     printf 'WORKER_JOIN=%q\nCP_JOIN=%q\n' "$WJOIN" "$CPJOIN" | $SUDO tee /vagrant/join-commands.txt >/dev/null
