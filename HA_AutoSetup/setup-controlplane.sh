@@ -421,7 +421,7 @@ run "$SUDO mkdir -p /etc/apt/keyrings"
 #   curl -fsSL = fetch silently, fail on error
 #   gpg --dearmor = convert the ASCII-armored key to binary format
 #   -o = save to the keyrings directory
-run "curl -fsSL https://pkgs.k8s.io/core:/stable:/$K8S/deb/Release.key | $SUDO gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+run "curl -fsSL https://pkgs.k8s.io/core:/stable:/$K8S/deb/Release.key | $SUDO gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg"
 
 # Add the Kubernetes apt repository to the system's package sources.
 # "signed-by" tells apt which GPG key to use to verify packages from this repo.
@@ -482,7 +482,7 @@ ok "Kubelet will use $NODE_IP as its node address."
 if [ "$FIRST" = "yes" ]; then
 
   # =========================================================================
-  # STAGE 6: Initialise the cluster with kubeadm init (FIRST control plane)
+  # STAGE 7: Initialise the cluster with kubeadm init (FIRST control plane)
   # =========================================================================
   # "kubeadm init" creates a brand-new Kubernetes cluster on this machine.
   # It generates all the certificates, starts etcd, the API server,

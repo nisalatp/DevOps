@@ -215,7 +215,7 @@ run "$SUDO mkdir -p /etc/apt/keyrings"
 
 # Download and install the Kubernetes repository's GPG signing key.
 # This key verifies that packages come from the official Kubernetes project.
-run "curl -fsSL https://pkgs.k8s.io/core:/stable:/$K8S/deb/Release.key | $SUDO gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+run "curl -fsSL https://pkgs.k8s.io/core:/stable:/$K8S/deb/Release.key | $SUDO gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg"
 
 # Add the Kubernetes apt repository to the system's package sources
 echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/$K8S/deb/ /" | $SUDO tee /etc/apt/sources.list.d/kubernetes.list >/dev/null
@@ -267,7 +267,7 @@ else
 fi
 
 # =============================================================================
-# STAGE 7: Join the cluster as a worker
+# STAGE 6: Join the cluster as a worker
 # =============================================================================
 # To join the cluster, we need the "join command" that was generated
 # by the first control plane during "kubeadm init".

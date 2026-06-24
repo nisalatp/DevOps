@@ -61,10 +61,10 @@ DEF_CPU = { 'lb' => 1,    'cp' => 2,    'wk' => 1 }
 
 # Human-readable role labels for the VirtualBox GUI.
 # Instead of showing just "k8s-cp1" in VirtualBox (which is cryptic for
-# new students), we prepend a descriptive role label so the VM list reads:
-#   k8s-lb1 [LoadBalancer | 192.168.56.5]
-#   k8s-cp1 [ControlPlane | 192.168.56.11]
-#   k8s-w1  [Worker | 192.168.56.21]
+# new students), we append a descriptive role label so the VM list reads:
+#   k8s-lb1-LoadBalancer-192.168.56.5
+#   k8s-cp1-ControlPlane-192.168.56.11
+#   k8s-w1-Worker-192.168.56.21
 # This makes it immediately obvious what each VM does when you open VirtualBox.
 ROLE_LABEL = { 'lb' => 'LoadBalancer', 'cp' => 'ControlPlane', 'wk' => 'Worker' }
 
