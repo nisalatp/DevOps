@@ -6,28 +6,38 @@ Interactive, narrated, and educational — each project walks you through the in
 
 ---
 
-## 📂 Projects
+## 🗂️ Projects by Branch
 
-| Path | Description | Status |
-|------|-------------|:------:|
-| [`DevOps/K8s/HA_AutoSetup`](DevOps/K8s/HA_AutoSetup/) | Build a highly-available Kubernetes cluster from scratch with HAProxy, Keepalived VIP, kubeadm, and Calico. Works on Vagrant and bare metal. | ✅ Ready |
+Each category lives on its own branch for clean, short URLs. Pick a branch to explore:
 
-> More automation projects coming soon — Docker, CI/CD, monitoring, and beyond.
+| Branch | Category | Projects |
+|--------|----------|----------|
+| [`K8s`](https://github.com/nisalatp/DevOps/tree/K8s) | ☸️ Kubernetes | [HA Auto-Setup](https://github.com/nisalatp/DevOps/tree/K8s/HA_AutoSetup) — Build a production-grade HA cluster from scratch |
+
+> More branches and projects coming soon — Docker, CI/CD, monitoring, and beyond.
 
 ---
 
 ## 🚀 Quick Start
 
-Each project has its own detailed `README.md` with step-by-step instructions. Pick a project from the table above and follow its guide.
+Each branch has its own `README.md` with detailed instructions. Clone the branch you need:
 
 **Example — HA Kubernetes cluster:**
 
 ```bash
-git clone https://github.com/nisalatp/DevOps.git
-cd DevOps/DevOps/K8s/HA_AutoSetup
+git clone -b K8s https://github.com/nisalatp/DevOps.git
+cd DevOps/HA_AutoSetup
 ./configure.sh     # Interactive cluster configurator
 vagrant up         # Create the VMs
 # Then follow the README to set up each node
+```
+
+**Run scripts directly (no clone needed):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-loadbalancer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-controlplane.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nisalatp/DevOps/K8s/HA_AutoSetup/setup-worker.sh | bash
 ```
 
 ---
