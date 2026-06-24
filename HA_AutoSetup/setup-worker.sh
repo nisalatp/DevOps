@@ -100,12 +100,32 @@ echo   # Blank line for spacing
 # STAGE 1: Gather settings
 # =============================================================================
 # Workers need very little configuration — just the Kubernetes version
-# (to install the right packages) and a join command.
+# (to install the right packages) and a join command (asked later).
+#
+# SMART DEFAULTS: If this VM was created by Vagrant, /vagrant/cluster.yaml
+# contains the Kubernetes version from configure.sh. We read it so the
+# student can just press Enter!
 stage "Gathering settings"
+
+# --- Try to auto-detect the Kubernetes version from cluster.yaml ---
+DEF_K8S=""    # Will hold the auto-detected Kubernetes version
+
+if [ -f /vagrant/cluster.yaml ]; then
+  info "Found /vagrant/cluster.yaml — auto-detecting settings from configure.sh..."
+
+  # Extract the Kubernetes version from the "k8s_version:" line.
+  # sed removes surrounding quotes and everything before the value.
+  # Example: k8s_version: "v1.36" → v1.36
+  DEF_K8S=$(grep -E '^k8s_version:' /vagrant/cluster.yaml | sed 's/.*: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' || true)
+
+  ok "Auto-detected: K8s=${DEF_K8S}"
+else
+  info "No /vagrant/cluster.yaml found — you'll need to enter the version manually."
+fi
 
 # Kubernetes version — determines which apt repository to use.
 # Must match the version used by the control planes.
-K8S=$(ask "Kubernetes version (minor)" "v1.36")
+K8S=$(ask "Kubernetes version (minor)" "${DEF_K8S:-v1.36}")
 
 # =============================================================================
 # STAGE 2: Disable swap (required by the kubelet)

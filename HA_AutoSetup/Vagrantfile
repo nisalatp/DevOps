@@ -59,6 +59,15 @@ DEF_MEM = { 'lb' => 512,  'cp' => 2048, 'wk' => 1536 }
 # performance), load balancers and workers can run fine on 1 CPU each.
 DEF_CPU = { 'lb' => 1,    'cp' => 2,    'wk' => 1 }
 
+# Human-readable role labels for the VirtualBox GUI.
+# Instead of showing just "k8s-cp1" in VirtualBox (which is cryptic for
+# new students), we prepend a descriptive role label so the VM list reads:
+#   k8s-lb1 [LoadBalancer | 192.168.56.5]
+#   k8s-cp1 [ControlPlane | 192.168.56.11]
+#   k8s-w1  [Worker | 192.168.56.21]
+# This makes it immediately obvious what each VM does when you open VirtualBox.
+ROLE_LABEL = { 'lb' => 'LoadBalancer', 'cp' => 'ControlPlane', 'wk' => 'Worker' }
+
 # =============================================================================
 # Build a flat list of all nodes from the YAML groups
 # =============================================================================
@@ -143,8 +152,11 @@ Vagrant.configure('2') do |config|
       # Other providers (VMware, Hyper-V) would use different settings.
       m.vm.provider 'virtualbox' do |vb|
 
-        # Name shown in the VirtualBox GUI
-        vb.name         = n['name']
+        # Name shown in the VirtualBox GUI.
+        # We build a descriptive name that includes the role and IP address
+        # so students can easily identify each VM in the VirtualBox Manager.
+        # Example: "k8s-cp1 [ControlPlane | 192.168.56.11]"
+        vb.name         = "#{n['name']} [#{ROLE_LABEL[n['role']]} | #{n['ip']}]"
 
         # RAM allocation in MB (from cluster.yaml or defaults)
         vb.memory       = n['mem']

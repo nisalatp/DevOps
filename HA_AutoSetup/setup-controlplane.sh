@@ -119,6 +119,11 @@ echo   # Blank line for spacing
 # =============================================================================
 # STAGE 0: Gather settings from the user
 # =============================================================================
+#
+# SMART DEFAULTS: If this VM was created by Vagrant, /vagrant/cluster.yaml
+# contains ALL the settings from configure.sh. We read that file and
+# auto-detect this node's identity from its hostname (e.g., "k8s-cp1").
+# The student can just press Enter through every prompt!
 stage "Gathering settings"
 
 # --- Auto-detect this node's "real" cluster IP ---
@@ -130,28 +135,82 @@ stage "Gathering settings"
 # The first remaining IP is our best guess for the cluster-facing address.
 NODE_IP_DEFAULT=$(hostname -I | tr ' ' '\n' | grep -vE '^(10\.0\.2\.|127\.|169\.254\.)' | head -1 || true)
 
+# --- Try to auto-detect EVERYTHING from cluster.yaml ---
+# /vagrant is a shared folder that Vagrant mounts on every VM.
+# It contains the same files as the HA_AutoSetup directory on the host.
+DEF_ENDPOINT=""   # Will hold the default API endpoint (VIP:6443)
+DEF_NODE_IP=""    # Will hold this node's IP from cluster.yaml
+DEF_K8S=""        # Will hold the Kubernetes version
+DEF_POD_CIDR=""   # Will hold the Pod CIDR
+DEF_CALICO=""     # Will hold the Calico version
+DEF_FIRST="y"     # Will be "y" for first CP, "n" for additional CPs
+
+if [ -f /vagrant/cluster.yaml ]; then
+  info "Found /vagrant/cluster.yaml — auto-detecting settings from configure.sh..."
+
+  # Extract the VIP from cluster.yaml and build the endpoint (VIP:6443).
+  # The endpoint is the address ALL nodes use to reach the Kubernetes API.
+  DEF_VIP=$(grep -E '^vip:' /vagrant/cluster.yaml | grep -oE '([0-9]+\.){3}[0-9]+' | head -1 || true)
+  [ -n "$DEF_VIP" ] && DEF_ENDPOINT="k8s-vip:6443"
+
+  # Extract Kubernetes version, Pod CIDR, and Calico version.
+  # These use the same grep pattern: find the YAML key, extract the value.
+  # sed removes surrounding quotes and everything before the value.
+  DEF_K8S=$(grep -E '^k8s_version:' /vagrant/cluster.yaml | sed 's/.*: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' || true)
+  DEF_POD_CIDR=$(grep -E '^pod_cidr:' /vagrant/cluster.yaml | sed 's/.*: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' || true)
+  DEF_CALICO=$(grep -E '^calico_version:' /vagrant/cluster.yaml | sed 's/.*: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/' || true)
+
+  # --- Auto-detect this node's IP from its hostname ---
+  # The Vagrantfile sets each VM's hostname to the name from cluster.yaml
+  # (e.g., "k8s-cp1"). We search cluster.yaml for a line containing our
+  # hostname and extract the IP from it.
+  #
+  # Example: if hostname is "k8s-cp1" and cluster.yaml has:
+  #   - { name: k8s-cp1, ip: 192.168.56.11 }
+  # then DEF_NODE_IP becomes "192.168.56.11".
+  MY_HOSTNAME=$(hostname)
+  DEF_NODE_IP=$(grep "$MY_HOSTNAME" /vagrant/cluster.yaml | grep -oE '([0-9]+\.){3}[0-9]+' | head -1 || true)
+
+  # --- Auto-detect if this is the FIRST control plane ---
+  # The first control plane in the list runs "kubeadm init" (creates the cluster).
+  # All others run "kubeadm join" (join the existing cluster).
+  # We compare our hostname with the FIRST k8s-cp entry in cluster.yaml.
+  FIRST_CP=$(grep 'k8s-cp' /vagrant/cluster.yaml | head -1 | grep -oE 'k8s-cp[0-9]+' || true)
+  if [ "$MY_HOSTNAME" = "$FIRST_CP" ]; then
+    DEF_FIRST="y"    # This IS the first control plane → will run kubeadm init
+  else
+    DEF_FIRST="n"    # This is an additional CP → will run kubeadm join
+  fi
+
+  ok "Auto-detected: node=$MY_HOSTNAME, IP=${DEF_NODE_IP:-$NODE_IP_DEFAULT}, K8s=${DEF_K8S}, first=${DEF_FIRST}"
+else
+  info "No /vagrant/cluster.yaml found — you'll need to enter settings manually."
+fi
+
 # --- Ask for the control-plane endpoint ---
 # This is the address ALL nodes use to reach the Kubernetes API.
 # In our HA setup, this is the VIP managed by the load balancers.
 # Format: hostname:port  (e.g., k8s-vip:6443)
 # k8s-vip resolves because we added it to /etc/hosts via the Vagrantfile.
-ENDPOINT=$(ask "Control-plane endpoint (the load-balancer VIP, host:port)" "k8s-vip:6443")
+ENDPOINT=$(ask "Control-plane endpoint (the load-balancer VIP, host:port)" "${DEF_ENDPOINT:-k8s-vip:6443}")
 
 # --- Ask for this node's advertise address ---
 # This is the IP that this control plane tells other nodes to use when
 # communicating with its API server. Must be reachable from all nodes.
-NODE_IP=$(ask "This node's cluster IP (advertised to the cluster)" "${NODE_IP_DEFAULT:-}")
+# AUTO-DETECT: matched from hostname in cluster.yaml, or filtered from hostname -I.
+NODE_IP=$(ask "This node's cluster IP (advertised to the cluster)" "${DEF_NODE_IP:-$NODE_IP_DEFAULT}")
 
 # --- Kubernetes and network settings ---
-K8S=$(ask "Kubernetes version (minor)" "v1.36")
+# All auto-filled from cluster.yaml if present.
+K8S=$(ask "Kubernetes version (minor)" "${DEF_K8S:-v1.36}")
 
 # Pod CIDR — the IP range assigned to Pods (containers).
 # Must NOT overlap with the VM subnet or your home network.
 # Calico will manage this range and assign Pod IPs from it.
-POD_CIDR=$(ask "Pod network CIDR (must not overlap your subnet)" "10.244.0.0/16")
+POD_CIDR=$(ask "Pod network CIDR (must not overlap your subnet)" "${DEF_POD_CIDR:-10.244.0.0/16}")
 
 # Calico version — the CNI plugin version to install.
-CALICO=$(ask "Calico version" "v3.29.1")
+CALICO=$(ask "Calico version" "${DEF_CALICO:-v3.29.1}")
 
 # --- Validate that we have a node IP ---
 [ -n "$NODE_IP" ] || die "Could not determine this node's IP — re-run and enter it."
@@ -159,7 +218,8 @@ CALICO=$(ask "Calico version" "v3.29.1")
 # --- Is this the first control plane, or joining an existing cluster? ---
 # The FIRST control plane runs "kubeadm init" to create the cluster.
 # Additional control planes run "kubeadm join" to join it.
-if confirm "Is this the FIRST control plane (initialise a brand-new cluster)?"; then
+# AUTO-DETECT: if hostname matches the first CP in cluster.yaml, default "yes".
+if confirm "Is this the FIRST control plane (initialise a brand-new cluster)?" "$DEF_FIRST"; then
   FIRST=yes
 else
   FIRST=no

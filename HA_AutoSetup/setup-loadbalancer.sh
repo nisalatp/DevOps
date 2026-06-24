@@ -119,24 +119,63 @@ echo   # Blank line for spacing
 # =============================================================================
 # We need to know: VIP address, control-plane IPs, network interface, and
 # whether to set up Keepalived for VIP failover.
+#
+# SMART DEFAULTS: If this VM was created by Vagrant, /vagrant/cluster.yaml
+# contains ALL the settings from configure.sh. We read that file and
+# auto-detect this node's role from its hostname (e.g., "k8s-lb1").
+# The student can just press Enter through every prompt!
 stage "Gathering settings"
 
-# --- Try to auto-detect defaults from cluster.yaml ---
-# If this VM was created by Vagrant, /vagrant is a shared folder that
-# contains the project files (including cluster.yaml). We try to
-# extract sensible defaults from it so the user doesn't have to type
-# everything manually.
-DEF_VIP=""    # Will hold the default VIP address if found
-DEF_CPS=""    # Will hold the default control-plane IPs if found
+# --- Try to auto-detect EVERYTHING from cluster.yaml ---
+# /vagrant is a shared folder that Vagrant mounts on every VM.
+# It contains the same files as the HA_AutoSetup directory on the host.
+DEF_VIP=""      # Will hold the default VIP address
+DEF_CPS=""      # Will hold the default control-plane IPs (comma-separated)
+DEF_DO_VIP="y"  # Default: set up Keepalived (yes for 2+ LBs)
+DEF_STATE=""    # Will be "MASTER" or "BACKUP" based on hostname position
+LB_COUNT=0      # How many load balancers are defined in the config
 
 if [ -f /vagrant/cluster.yaml ]; then
-  # Extract the VIP IP from the "vip:" line using grep.
-  # The regex matches patterns like 192.168.56.10.
+  info "Found /vagrant/cluster.yaml — auto-detecting settings from configure.sh..."
+
+  # Extract the VIP IP from the "vip:" line.
+  # grep -E '^vip:' finds the line starting with "vip:"
+  # grep -oE '([0-9]+\.){3}[0-9]+' extracts just the IP address from it
   DEF_VIP=$(grep -E '^vip:' /vagrant/cluster.yaml | grep -oE '([0-9]+\.){3}[0-9]+' | head -1 || true)
 
-  # Extract all control-plane IPs (from lines containing "k8s-cp"),
-  # then join them with commas using "paste -sd, -".
+  # Extract all control-plane IPs from lines containing "k8s-cp".
+  # paste -sd, joins them into a comma-separated string.
+  # Example output: "192.168.56.11,192.168.56.12,192.168.56.13"
   DEF_CPS=$(grep 'k8s-cp' /vagrant/cluster.yaml | grep -oE '([0-9]+\.){3}[0-9]+' | paste -sd, -)
+
+  # Count how many load balancers are defined.
+  # If there's only 1, Keepalived VIP failover isn't useful (no backup to
+  # fail over to), so we default to skipping it.
+  LB_COUNT=$(grep -c 'k8s-lb' /vagrant/cluster.yaml || echo 0)
+  if [ "$LB_COUNT" -lt 2 ]; then
+    DEF_DO_VIP="n"   # Only 1 LB → no VIP failover
+  fi
+
+  # --- Auto-detect this node's role from its hostname ---
+  # The Vagrantfile sets each VM's hostname to the name from cluster.yaml
+  # (e.g., "k8s-lb1", "k8s-lb2"). We compare our hostname against the
+  # FIRST load-balancer entry in cluster.yaml.
+  #
+  # If this node is the FIRST LB (k8s-lb1), it becomes the MASTER.
+  # All other LBs become BACKUPs. This is automatic — the student
+  # doesn't need to know or decide.
+  MY_HOSTNAME=$(hostname)
+  FIRST_LB=$(grep 'k8s-lb' /vagrant/cluster.yaml | head -1 | grep -oE 'k8s-lb[0-9]+' || true)
+
+  if [ "$MY_HOSTNAME" = "$FIRST_LB" ]; then
+    DEF_STATE="MASTER"   # First LB in the list → MASTER (priority 101)
+  else
+    DEF_STATE="BACKUP"   # All other LBs → BACKUP (priority 100)
+  fi
+
+  ok "Auto-detected: VIP=$DEF_VIP, CPs=$DEF_CPS, LBs=$LB_COUNT, role=$DEF_STATE"
+else
+  info "No /vagrant/cluster.yaml found — you'll need to enter settings manually."
 fi
 
 # --- Ask the user for the VIP (Virtual IP) ---
@@ -170,8 +209,11 @@ IFACE=$(ask "Network interface that holds the VIP" "${IFACE:-eth1}")
 # If you only have 1 load balancer, there's no failover (if it dies,
 # the cluster is unreachable). With 2+ LBs, Keepalived moves the VIP
 # to a backup LB automatically.
+#
+# AUTO-DETECT: If cluster.yaml has 2+ LBs, default is "yes".
+#              If only 1 LB, default is "no".
 DO_VIP=no
-if confirm "Set up the Keepalived VIP on this node? (yes if you have 2+ load balancers)"; then
+if confirm "Set up the Keepalived VIP on this node? (yes if you have 2+ load balancers)" "$DEF_DO_VIP"; then
   DO_VIP=yes
 fi
 
@@ -180,9 +222,19 @@ STATE=BACKUP    # Default VRRP state: BACKUP (standby)
 PRIO=100        # Default priority: 100 (lower than MASTER)
 
 if [ "$DO_VIP" = yes ]; then
+  # AUTO-DETECT MASTER/BACKUP from hostname.
+  # If auto-detected as MASTER, default the confirm to "yes".
+  # If auto-detected as BACKUP, default to "no".
+  # The student just presses Enter either way.
+  if [ "$DEF_STATE" = "MASTER" ]; then
+    DEF_MASTER="y"
+  else
+    DEF_MASTER="n"
+  fi
+
   # One LB must be the MASTER (active), the rest are BACKUPs (standby).
   # The MASTER gets priority 101 (higher = preferred).
-  if confirm "Is this the PRIMARY (MASTER) load balancer?"; then
+  if confirm "Is this the PRIMARY (MASTER) load balancer?" "$DEF_MASTER"; then
     STATE=MASTER   # This node will be the active VIP holder
     PRIO=101       # Higher priority wins the election
   fi
