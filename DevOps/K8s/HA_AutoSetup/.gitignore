@@ -1,0 +1,10 @@
+# Vagrant
+.vagrant/
+*.box
+
+# generated at runtime by the first control plane
+join-commands.txt
+
+# editors / OS
+.DS_Store
+*.swp
