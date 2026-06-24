@@ -517,11 +517,68 @@ if [ "$FIRST" = "yes" ]; then
   run "$SUDO kubeadm init --control-plane-endpoint '$ENDPOINT' --upload-certs --pod-network-cidr='$POD_CIDR' --apiserver-advertise-address='$NODE_IP' --apiserver-cert-extra-sans='$EXTRA_SANS'"
 
   # =========================================================================
-  # STAGE 6: Configure kubectl for the current user
+  # STAGE 7: Fix kubeconfig server endpoints
+  # =========================================================================
+  # BUG IN VAGRANT ENVIRONMENTS:
+  #   kubeadm init just completed and generated kubeconfig files at:
+  #     /etc/kubernetes/admin.conf
+  #     /etc/kubernetes/kubelet.conf
+  #     /etc/kubernetes/controller-manager.conf
+  #     /etc/kubernetes/scheduler.conf
+  #
+  #   Despite passing --apiserver-advertise-address='192.168.56.11', kubeadm
+  #   may write these kubeconfig files with:
+  #     server: https://10.0.2.15:6443    <-- NAT interface (WRONG!)
+  #   instead of:
+  #     server: https://k8s-vip:6443      <-- VIP endpoint (CORRECT)
+  #
+  # WHY THIS IS A PROBLEM:
+  #   Later stages (kubectl, upload-certs) read these kubeconfig files
+  #   to contact the API server. When they connect to 10.0.2.15:6443,
+  #   TLS verification fails because the API server certificate only
+  #   has SANs for 192.168.56.11, 192.168.56.10, and 10.96.0.1 —
+  #   NOT 10.0.2.15.
+  #
+  #   Error: "certificate is valid for 10.96.0.1, 192.168.56.11,
+  #            192.168.56.10, not 10.0.2.15"
+  #
+  # FIX: Use sed to replace the server URL in ALL kubeconfig files
+  #      with the correct VIP-based endpoint.
+  stage "Fixing kubeconfig server endpoints"
+
+  # Build the correct server URL from the ENDPOINT variable.
+  # ENDPOINT is e.g. "k8s-vip:6443" → server becomes "https://k8s-vip:6443"
+  KUBECONFIG_ENDPOINT=$(echo "$ENDPOINT" | cut -d: -f1)
+  KUBECONFIG_SERVER="https://${KUBECONFIG_ENDPOINT}:6443"
+
+  info "Patching kubeconfig files to use $KUBECONFIG_SERVER (instead of NAT IP)."
+
+  # Loop through all four kubeconfig files that kubeadm generates.
+  # For each file:
+  #   1. Check if it exists (-f test)
+  #   2. Use sed to replace any "server: https://..." line with the correct URL
+  #      sed -i = edit the file in-place
+  #      's|...|...|g' = substitute (using | as delimiter instead of / to avoid
+  #      escaping the slashes in URLs)
+  for cfg in /etc/kubernetes/admin.conf \
+             /etc/kubernetes/kubelet.conf \
+             /etc/kubernetes/controller-manager.conf \
+             /etc/kubernetes/scheduler.conf; do
+    if [ -f "$cfg" ]; then
+      $SUDO sed -i "s|server:.*|server: $KUBECONFIG_SERVER|g" "$cfg"
+    fi
+  done
+
+  ok "Kubeconfig files patched to use $KUBECONFIG_SERVER."
+
+  # =========================================================================
+  # STAGE 8: Configure kubectl for the current user
   # =========================================================================
   # kubeadm init creates a kubeconfig file at /etc/kubernetes/admin.conf
   # with credentials (certificates) to talk to the API server as admin.
   # We copy it to ~/.kube/config so kubectl can find it automatically.
+  # NOTE: We patched admin.conf in the previous stage, so the copy
+  # will have the correct server endpoint.
   stage "Configuring kubectl for $(whoami)"
 
   # Create the ~/.kube directory if it doesn't exist
@@ -539,7 +596,7 @@ if [ "$FIRST" = "yes" ]; then
   ok "kubectl is ready (try: kubectl get nodes)."
 
   # =========================================================================
-  # STAGE 7: Install the Calico CNI (Container Network Interface) plugin
+  # STAGE 9: Install the Calico CNI (Container Network Interface) plugin
   # =========================================================================
   # WHAT IS A CNI PLUGIN?
   #   Kubernetes doesn't handle Pod networking itself. It delegates to a
@@ -582,7 +639,7 @@ EOF
   ok "Calico is installing. Nodes turn Ready once its pods are Running."
 
   # =========================================================================
-  # STAGE 8: Generate join commands for the other nodes
+  # STAGE 10: Generate join commands for the other nodes
   # =========================================================================
   # Other nodes need two pieces of information to join the cluster:
   #   1. A bootstrap token  — a short-lived secret that proves the new
@@ -668,6 +725,29 @@ else
   # Execute the join command, adding --apiserver-advertise-address so
   # this control plane advertises the correct IP to the cluster.
   run "$JOIN $([ -n "$NODE_IP" ] && echo --apiserver-advertise-address=$NODE_IP)"
+
+  # =========================================================================
+  # Fix kubeconfig server endpoints (same issue as first CP — see Stage 7)
+  # =========================================================================
+  # After kubeadm join, the kubeconfig files on this node may also contain
+  # the NAT IP (10.0.2.15) instead of the VIP. Patch them before using kubectl.
+  stage "Fixing kubeconfig server endpoints"
+
+  KUBECONFIG_ENDPOINT=$(echo "$ENDPOINT" | cut -d: -f1)
+  KUBECONFIG_SERVER="https://${KUBECONFIG_ENDPOINT}:6443"
+
+  info "Patching kubeconfig files to use $KUBECONFIG_SERVER (instead of NAT IP)."
+
+  for cfg in /etc/kubernetes/admin.conf \
+             /etc/kubernetes/kubelet.conf \
+             /etc/kubernetes/controller-manager.conf \
+             /etc/kubernetes/scheduler.conf; do
+    if [ -f "$cfg" ]; then
+      $SUDO sed -i "s|server:.*|server: $KUBECONFIG_SERVER|g" "$cfg"
+    fi
+  done
+
+  ok "Kubeconfig files patched to use $KUBECONFIG_SERVER."
 
   # Configure kubectl for this node (same as Stage 6 above)
   stage "Configuring kubectl for $(whoami)"
