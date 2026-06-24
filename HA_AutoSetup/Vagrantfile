@@ -155,8 +155,10 @@ Vagrant.configure('2') do |config|
         # Name shown in the VirtualBox GUI.
         # We build a descriptive name that includes the role and IP address
         # so students can easily identify each VM in the VirtualBox Manager.
-        # Example: "k8s-cp1 [ControlPlane | 192.168.56.11]"
-        vb.name         = "#{n['name']} [#{ROLE_LABEL[n['role']]} | #{n['ip']}]"
+        # Example: "k8s-cp1 (ControlPlane, 192.168.56.11)"
+        # NOTE: VirtualBox does not allow square brackets in VM names,
+        # so we use parentheses instead.
+        vb.name         = "#{n['name']} (#{ROLE_LABEL[n['role']]}, #{n['ip']})"
 
         # RAM allocation in MB (from cluster.yaml or defaults)
         vb.memory       = n['mem']
